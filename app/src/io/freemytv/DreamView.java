@@ -41,6 +41,8 @@ import java.util.concurrent.Executors;
  * from the screensaver on (Prefs.saverWatch), OK first opens the title in its app, and the caption says so.
  * With your own photos on (Photos), those instead, without a caption.
  * Without photos (no TMDB key, or before the first fetch): the big clock over the night aurora.
+ * With `stars=true` (Config.STARS), always that clock, with the weather, over pure black with the stars and comets
+ * (Stars), in the pinetree palette: no photos and no prices.
  */
 final class DreamView extends View implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener {
     private static final long SHOW_MS = 30_000, FADE_MS = 3_000, FIRST_MS = 1_600;
@@ -101,6 +103,8 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
     }
 
     private final Scene scene = new Scene(false);
+    private final Stars stars = new Stars();
+    private final RectF clockInk = new RectF();
     private final HomeData data;
     private final Recs recs;
     private final NowPlaying.Watch playing;
@@ -244,13 +248,15 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         content.setPosition(0, 0, w, h);
         chrome.setPosition(0, 0, w, h);
         // Without photos (the clock over the aurora).
-        datePaint = Ui.text(Ui.semibold, 36 * k, 0xD9FFFFFF);
+        int ink = Config.STARS ? 0xE8DCB8 : 0xFFFFFF;   // the stars' cream, or white
+        datePaint = Ui.text(Ui.semibold, 36 * k, 0xD9000000 | ink);
         datePaint.setTextAlign(Paint.Align.CENTER);
-        clockPaint = Ui.numbers(Ui.thin, 280 * k, 0xF2FFFFFF);
+        clockPaint = Ui.numbers(Ui.thin, 280 * k, 0xF2000000 | ink);
         clockPaint.setTextAlign(Paint.Align.CENTER);
         clockPaint.setLetterSpacing(-0.01f);
-        weatherPaint = Ui.numbers(Ui.medium, 30 * k, 0xC7FFFFFF);
-        weatherDim = Ui.numbers(Ui.regular, 28 * k, 0x80FFFFFF);
+        weatherPaint = Ui.numbers(Ui.medium, 30 * k, 0xC7000000 | ink);
+        weatherDim = Ui.numbers(Ui.regular, 28 * k, 0x80000000 | ink);
+        if (Config.STARS) stars.setSize(w, h, k);
         quotePaint = Ui.numbers(Ui.medium, 24 * k, 0x99FFFFFF);
         stalePaint = Ui.text(Ui.regular, 20 * k, 0x59FFFFFF);
         stalePaint.setTextAlign(Paint.Align.CENTER);
@@ -282,6 +288,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
 
     /** Your photos when they are on, otherwise the picks'. */
     private List<Recs.Pick> photos() {
+        if (Config.STARS) return java.util.Collections.emptyList();
         return Photos.on(getContext()) ? Photos.picks(getContext()) : recs.showcase();
     }
 
@@ -425,7 +432,9 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
 
     @Override public void doFrame(long frameTimeNanos) {
         if (!running) return;
-        if (frameTimeNanos - lastFrame >= 45_000_000L) {
+        // The stars move at 30 frames a second, and a comet at 60 (the aurora needs ~22).
+        long every = !Config.STARS ? 45_000_000L : stars.busy(SystemClock.uptimeMillis()) ? 0 : 30_000_000L;
+        if (frameTimeNanos - lastFrame >= every) {
             lastFrame = frameTimeNanos;
             invalidate();
         }
@@ -805,7 +814,12 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
             lastSky = up;
             scene.advance(timeOffset + t);
         }
-        scene.drawBackground(canvas);
+        if (Config.STARS) {
+            canvas.drawRect(0, 0, w, h, black);
+            stars.draw(canvas, up, 1);
+        } else {
+            scene.drawBackground(canvas);
+        }
         if (dirty) {
             Canvas rc = content.beginRecording(w, h);
             try {
@@ -832,7 +846,14 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         float clockCap = Ui.cap(clockPaint);
         float clockBase = h * 0.5f + clockCap / 2 - 10 * k;
         c.drawText(date, cx, clockBase - clockCap - 34 * k, datePaint);
+        if (Config.STARS) {   // the brand's blue → green across the digits
+            float half = clockPaint.measureText(clock) / 2;
+            clockInk.set(cx - half, clockBase - clockCap, cx + half, clockBase);
+            clockPaint.setShader(new LinearGradient(clockInk.left, clockInk.top, clockInk.right, clockInk.bottom,
+                    0xFF2F8DFF, 0xFF22E07A, Shader.TileMode.CLAMP));
+        }
         c.drawText(clock, cx, clockBase, clockPaint);
+        clockPaint.setShader(null);
 
         // Weather: symbol, temperature, high and low, centered under the clock.
         HomeData.Weather wx = data.weather;
@@ -859,7 +880,7 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         // Prices near the bottom edge: small white logo + value, all four on one line.
         float cap = Ui.cap(quotePaint), spacing = 56 * k, gap = 10 * k;
         int[] coins = HomeData.active();
-        String[] values = new String[playingBottom != null ? 0 : HomeData.coinCount()];
+        String[] values = new String[playingBottom != null || Config.STARS ? 0 : HomeData.coinCount()];
         float total = spacing * (values.length - 1);
         if (playingBottom != null) {
             float bars = NowPlaying.barsWidth(bottomCap) + bottomCap * 0.6f;
