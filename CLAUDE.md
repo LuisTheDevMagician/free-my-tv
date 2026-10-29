@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Free My TV: notes for Claude
 
 A home screen for Google TV and Android TV that replaces the stock one, plus a settings app that switches between
@@ -15,6 +19,23 @@ call that fails there.
 
 The person you're helping may not be technical. Keep it short and friendly, say what you're about to do on their TV
 before you do it, and let them do the taps on the TV.
+
+## Commands
+
+```bash
+./build.sh                          # → FreeMyTV.apk, with config.properties (the first run creates it)
+./build.sh --generic                # the release's build: no config.properties, the city from the TV's time zone
+tools/check.sh                      # what CI runs: everything
+tools/check.sh android              # only the Google TV build
+tools/check.sh web                  # translations, the LG and Samsung packages, ES5 and CSS (Python 3 and Node)
+python3 tools/translate.py          # after changing text: rebuilds en.json and lists what each language lacks
+python3 tools/translate.py --check  # validates every catalogue, writes nothing
+python3 webos/build.py --preview    # then open out/webos/index.html in a browser (tizen/build.py too)
+adb logcat -s FreeMyTV              # what the app did on the TV
+```
+
+There is no test suite: `tools/check.sh` and a real TV are the checks. `tools/check.sh web` builds the generic LG and
+Samsung packages and puts your own `FreeMyTV-webos.ipk` and `FreeMyTV-tizen.wgt` back afterwards.
 
 ## Always
 
@@ -251,6 +272,14 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
 
 ## The code
 
+Where things run (`android:process` in `app/AndroidManifest.xml`):
+- **main:** `ModeJob` and `HomeMode` (every switch, the boot check), `Updates`, `Secrets`, and the screensaver on
+  Android 11 to 12L (`ScreensaverAlone`).
+- **`:home`:** the home screen (`HomeActivity`, `HomeView`), `SettingsActivity`, `KeyPage`, `Trakt`, and the
+  screensaver on Android 8 to 10 and 13+ (`Screensaver`).
+- **`:keys`:** `RemoteKeyService` alone. **`:sleep`:** `SleepOverlay` alone.
+- Across processes they share files, not memory: `remote-keys.txt`, `update.json`, `Prefs.reload()`.
+
 - Java 8 language level, minSdk 26 (Android 8), targetSdk 33. No Gradle, no libraries: only the Android SDK.
   Android 9 and older have no RenderNode (`Recording` wraps it, with a Picture there) and no `cmd role`. On Android 8 to 11,
   and on Android 12 and 12L under 3 GB of RAM (`Ui.LEGACY`), the home screen skips the GPU layers, draws blurred
@@ -265,7 +294,13 @@ entries; its system pieces are in `PROTECTED`. USB debugging opens ADB on 5555 t
   To check for newer APIs, compile against `platforms/android-26/android.jar`: only AGSL (`RuntimeShader`, guarded
   by a try/catch), `BitmapShader.setFilterMode` (guarded), `Recording.Node`, `Ui.Weighted` (the Android 9 font weight)
   and `Activity.setTranslucent` (guarded: TCL's Android 11 marks the home activity translucent, and the app just left
-  stayed on screen over it) should come up.
+  stayed on screen over it) should come up. `build.sh` always takes the newest `android.jar`, so do it by hand after a
+  build (it needs `out/gen`, and `sdkmanager "platforms;android-26"`):
+  ```bash
+  P="$ANDROID_HOME/platforms/android-26/android.jar"; BT="$ANDROID_HOME/build-tools/34.0.0"
+  mkdir -p out/api26 && javac -nowarn -Xlint:-options -source 8 -target 8 -bootclasspath "$P:$BT/core-lambda-stubs.jar" \
+    -classpath "$P" -encoding UTF-8 -d out/api26 $(find app/src out/gen -name '*.java')
+  ```
 - The home screen is drawn by hand on one Canvas (`HomeView`); the glass and the sky are AGSL shaders (`Shaders`,
   Android 13+, with a fallback for 8 to 12). Keep it at 60 fps: no allocations in `onDraw`, no work on the UI thread.
 - Some TVs draw their UI at 1280×720 on a 1080p panel (TCL's 1 GB models: `ro.surface_flinger.max_graphics_width`
